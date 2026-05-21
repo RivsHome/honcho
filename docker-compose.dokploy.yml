@@ -1,0 +1,118 @@
+name: honcho
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_CONNECTION_URI: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Dokploy}@database:5432/${POSTGRES_DB:-postgres}
+      CACHE_URL: redis://redis:6379/0?suppress=true
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      AUTH_USE_AUTH: ${AUTH_USE_AUTH:-false}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      LLM_OPENAI_API_KEY: ${LLM_OPENAI_API_KEY:?LLM_OPENAI_API_KEY must be set in Dokploy}
+      LLM_ANTHROPIC_API_KEY: ${LLM_ANTHROPIC_API_KEY:-}
+      LLM_GEMINI_API_KEY: ${LLM_GEMINI_API_KEY:-}
+      VECTOR_STORE_TYPE: ${VECTOR_STORE_TYPE:-pgvector}
+      VECTOR_STORE_MIGRATED: ${VECTOR_STORE_MIGRATED:-false}
+      NAMESPACE: ${NAMESPACE:-honcho}
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.honcho.rule=Host(`${APP_DOMAIN:?APP_DOMAIN must be set in Dokploy}`)"
+      - "traefik.http.routers.honcho.entrypoints=websecure"
+      - "traefik.http.routers.honcho.tls=true"
+      - "traefik.http.routers.honcho.tls.certresolver=letsencrypt"
+      - "traefik.http.services.honcho.loadbalancer.server.port=8000"
+
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      api:
+        condition: service_healthy
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_CONNECTION_URI: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Dokploy}@database:5432/${POSTGRES_DB:-postgres}
+      CACHE_URL: redis://redis:6379/0?suppress=true
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      LLM_OPENAI_API_KEY: ${LLM_OPENAI_API_KEY:?LLM_OPENAI_API_KEY must be set in Dokploy}
+      LLM_ANTHROPIC_API_KEY: ${LLM_ANTHROPIC_API_KEY:-}
+      LLM_GEMINI_API_KEY: ${LLM_GEMINI_API_KEY:-}
+      VECTOR_STORE_TYPE: ${VECTOR_STORE_TYPE:-pgvector}
+      VECTOR_STORE_MIGRATED: ${VECTOR_STORE_MIGRATED:-false}
+      NAMESPACE: ${NAMESPACE:-honcho}
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Dokploy}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:8.2
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  pgdata:
+  redis-data:
