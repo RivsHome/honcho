@@ -46,6 +46,9 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.honcho-web.rule=Host(`${APP_DOMAIN:?APP_DOMAIN must be set in Dokploy}`)"
+      - "traefik.http.routers.honcho-web.entrypoints=web"
+      - "traefik.http.routers.honcho-web.service=honcho"
       - "traefik.http.routers.honcho.rule=Host(`${APP_DOMAIN:?APP_DOMAIN must be set in Dokploy}`)"
       - "traefik.http.routers.honcho.entrypoints=websecure"
       - "traefik.http.routers.honcho.tls=true"
